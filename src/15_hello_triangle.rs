@@ -83,7 +83,7 @@ fn draw_frame(
     render_finished_semaphore: &<back::Backend as hal::Backend>::Semaphore,
     in_flight_fence: &<back::Backend as hal::Backend>::Fence,
 ) {
-    device.wait_for_fence(in_flight_fence);
+    device.wait_for_fence(in_flight_fence, std::u64::MAX);
     device.reset_fence(in_flight_fence);
 
     let image_index = swapchain
@@ -769,7 +769,7 @@ fn main_loop(
                 &render_finished_semaphores[current_frame],
                 &in_flight_fences[current_frame],
             );
-            current_frame = (current_frame + 1)%2;
+            currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
             winit::ControlFlow::Continue
         }
     });
