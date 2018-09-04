@@ -232,7 +232,7 @@ fn draw_frame(
         swapchain_state.device.reset_fence(in_flight_fence);
         command_queues[0].submit(submission, Some(in_flight_fence));
     }
-    
+
     swapchain_state
         .swapchain
         .present(
