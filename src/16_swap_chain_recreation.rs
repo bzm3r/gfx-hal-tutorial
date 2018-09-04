@@ -174,7 +174,7 @@ fn draw_frame(
     image_available_semaphore: &<back::Backend as hal::Backend>::Semaphore,
     render_finished_semaphore: &<back::Backend as hal::Backend>::Semaphore,
     in_flight_fence: &<back::Backend as hal::Backend>::Fence,
-) -> usize {
+) {
     swapchain_state.device.wait_for_fence(in_flight_fence, std::u64::MAX);
 
     let image_index = match swapchain_state.swapchain.acquire_image(std::u64::MAX, hal::window::FrameSync::Semaphore(image_available_semaphore)) {
@@ -184,7 +184,7 @@ fn draw_frame(
                 hal::window::AcquireError::NotReady => panic!("No timeout provided, yet image acquire timed out!"),
                 hal::window::AcquireError::OutOfDate => {
                     swapchain_state.recreate();
-                    return current_frame;
+                    return
                 },
                 hal::window::AcquireError::SurfaceLost => panic!("Cannot acquire image: surface lost!"),
             }
@@ -211,10 +211,10 @@ fn draw_frame(
     // if Swapchain::present returns an error, that means it got one of the results SUBOPTIMAL_KHR or ERROR_OUT_OF_DATE_KHR
     // (see documentation for hal::window::Swapchain::present)
     match swapchain_state.swapchain.present(&mut command_queues[0], image_index, vec![render_finished_semaphore]) {
-        Ok(()) => {
-            (current_frame + 1)%2
+        Ok(()) => {},
+        Err(()) => {
+            swapchain_state.recreate();
         },
-        Err(()) => current_frame,
     }
 }
 
@@ -796,7 +796,7 @@ fn main_loop(
                 &render_finished_semaphores[current_frame],
                 &in_flight_fences[current_frame],
             );
-            currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+            current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
             winit::ControlFlow::Continue
         }
     });

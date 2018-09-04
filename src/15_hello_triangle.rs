@@ -769,7 +769,7 @@ fn main_loop(
                 &render_finished_semaphores[current_frame],
                 &in_flight_fences[current_frame],
             );
-            currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+            current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
             winit::ControlFlow::Continue
         }
     });
