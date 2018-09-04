@@ -31,7 +31,8 @@ fn main() {
         in_flight_fences,
     ) = init_hal(&window);
 
-    main_loop(events_loop,
+    main_loop(
+        events_loop,
         &mut command_queues,
         &mut swapchain_state,
         &image_available_semaphores,
@@ -46,9 +47,6 @@ fn main() {
     );
 }
 
-
-
-
 struct SwapchainState {
     adapter: hal::Adapter<back::Backend>,
     surface: <back::Backend as hal::Backend>::Surface,
@@ -56,7 +54,10 @@ struct SwapchainState {
     queue_type: hal::queue::QueueType,
     qf_id: hal::queue::family::QueueFamilyId,
     swapchain: <back::Backend as hal::Backend>::Swapchain,
-    frame_images: Vec<(<back::Backend as hal::Backend>::Image, <back::Backend as hal::Backend>::ImageView,)>,
+    frame_images: Vec<(
+        <back::Backend as hal::Backend>::Image,
+        <back::Backend as hal::Backend>::ImageView,
+    )>,
     render_pass: <back::Backend as hal::Backend>::RenderPass,
     swapchain_framebuffers: Vec<<back::Backend as hal::Backend>::Framebuffer>,
     descriptor_set_layouts: Vec<<back::Backend as hal::Backend>::DescriptorSetLayout>,
@@ -64,22 +65,29 @@ struct SwapchainState {
     gfx_pipeline: <back::Backend as hal::Backend>::GraphicsPipeline,
     command_pool: hal::pool::CommandPool<back::Backend, hal::Graphics>,
     submission_command_buffers: Vec<
-                                    hal::command::Submit<
-                                        back::Backend,
-                                        hal::Graphics,
-                                        hal::command::MultiShot,
-                                        hal::command::Primary,
-                                    >,
-                                >,
+        hal::command::Submit<
+            back::Backend,
+            hal::Graphics,
+            hal::command::MultiShot,
+            hal::command::Primary,
+        >,
+    >,
 }
 
 impl SwapchainState {
-    fn create(adapter: hal::Adapter<back::Backend>, mut surface: <back::Backend as hal::Backend>::Surface, device: <back::Backend as hal::Backend>::Device, queue_type: hal::queue::QueueType, qf_id: hal::queue::family::QueueFamilyId) -> SwapchainState {
+    fn create(
+        adapter: hal::Adapter<back::Backend>,
+        mut surface: <back::Backend as hal::Backend>::Surface,
+        device: <back::Backend as hal::Backend>::Device,
+        queue_type: hal::queue::QueueType,
+        qf_id: hal::queue::family::QueueFamilyId,
+    ) -> SwapchainState {
         let (swapchain, extent, backbuffer, format) =
             create_swap_chain(&adapter, &device, &mut surface, None);
         let frame_images = create_image_views(backbuffer, format, &device);
         let render_pass = create_render_pass(&device, Some(format));
-        let swapchain_framebuffers = create_framebuffers(&device, &render_pass, &frame_images, extent);
+        let swapchain_framebuffers =
+            create_framebuffers(&device, &render_pass, &frame_images, extent);
         let (descriptor_set_layouts, pipeline_layout, gfx_pipeline) =
             create_graphics_pipeline(&device, extent, &render_pass);
         let mut command_pool = create_command_pool(&device, queue_type, qf_id);
@@ -109,15 +117,29 @@ impl SwapchainState {
         }
     }
 
-    fn clean_up(mut swapchain_state: SwapchainState, destroy_command_pool: bool) -> (hal::Adapter<back::Backend>, <back::Backend as hal::Backend>::Surface, <back::Backend as hal::Backend>::Device, hal::queue::QueueType, hal::queue::family::QueueFamilyId) {
-        let (adapter, surface, device, queue_type, qf_id) = (swapchain_state.adapter, swapchain_state.surface, swapchain_state.device, swapchain_state.queue_type, swapchain_state.qf_id);
+    fn clean_up(
+        mut swapchain_state: SwapchainState,
+        destroy_command_pool: bool,
+    ) -> (
+        hal::Adapter<back::Backend>,
+        <back::Backend as hal::Backend>::Surface,
+        <back::Backend as hal::Backend>::Device,
+        hal::queue::QueueType,
+        hal::queue::family::QueueFamilyId,
+    ) {
+        let (adapter, surface, device, queue_type, qf_id) = (
+            swapchain_state.adapter,
+            swapchain_state.surface,
+            swapchain_state.device,
+            swapchain_state.queue_type,
+            swapchain_state.qf_id,
+        );
 
         if destroy_command_pool {
             device.destroy_command_pool(swapchain_state.command_pool.into_raw());
         } else {
             swapchain_state.command_pool.reset();
         }
-
 
         for fb in swapchain_state.swapchain_framebuffers.into_iter() {
             device.destroy_framebuffer(fb);
@@ -151,7 +173,8 @@ impl SwapchainState {
 
         self.frame_images = create_image_views(backbuffer, format, &self.device);
         self.render_pass = create_render_pass(&self.device, Some(format));
-        self.swapchain_framebuffers = create_framebuffers(&self.device, &self.render_pass, &self.frame_images, extent);
+        self.swapchain_framebuffers =
+            create_framebuffers(&self.device, &self.render_pass, &self.frame_images, extent);
         let (descriptor_set_layouts, pipeline_layout, gfx_pipeline) =
             create_graphics_pipeline(&self.device, extent, &self.render_pass);
         self.descriptor_set_layouts = descriptor_set_layouts;
@@ -175,33 +198,42 @@ fn draw_frame(
     render_finished_semaphore: &<back::Backend as hal::Backend>::Semaphore,
     in_flight_fence: &<back::Backend as hal::Backend>::Fence,
 ) {
-    swapchain_state.device.wait_for_fence(in_flight_fence, std::u64::MAX);
+    swapchain_state
+        .device
+        .wait_for_fence(in_flight_fence, std::u64::MAX);
 
-    let image_index = match swapchain_state.swapchain.acquire_image(std::u64::MAX, hal::window::FrameSync::Semaphore(image_available_semaphore)) {
+    let image_index = match swapchain_state.swapchain.acquire_image(
+        std::u64::MAX,
+        hal::window::FrameSync::Semaphore(image_available_semaphore),
+    ) {
         Ok(image_index) => image_index,
-        Err(acquire_error) => {
-            match acquire_error {
-                hal::window::AcquireError::NotReady => panic!("No timeout provided, yet image acquire timed out!"),
-                hal::window::AcquireError::OutOfDate => {
-                    swapchain_state.recreate();
-                    return
-                },
-                hal::window::AcquireError::SurfaceLost => panic!("Cannot acquire image: surface lost!"),
+        Err(acquire_error) => match acquire_error {
+            hal::window::AcquireError::NotReady => {
+                panic!("No timeout provided, yet image acquire timed out!")
             }
-        }
+            hal::window::AcquireError::OutOfDate => {
+                swapchain_state.recreate();
+                return;
+            }
+            hal::window::AcquireError::SurfaceLost => panic!("Cannot acquire image: surface lost!"),
+        },
     };
 
-    let submission = hal::queue::submission::Submission::new()
-        .wait_on(&[(
-            image_available_semaphore,
-            hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
-        )]).signal(vec![render_finished_semaphore])
-        .submit(Some(&swapchain_state.submission_command_buffers[image_index as usize]));
+    let submission = {
+        let submission = &swapchain_state.submission_command_buffers[image_index as usize];
+        hal::queue::submission::Submission::new()
+            .wait_on(&[(
+                image_available_semaphore,
+                hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+            )]).signal(vec![render_finished_semaphore])
+            .submit(Some(submission))
+    };
 
     swapchain_state.device.reset_fence(in_flight_fence);
     command_queues[0].submit(submission, Some(in_flight_fence));
 
-    swapchain_state.swapchain
+    swapchain_state
+        .swapchain
         .present(
             &mut command_queues[0],
             image_index,
@@ -210,11 +242,13 @@ fn draw_frame(
 
     // if Swapchain::present returns an error, that means it got one of the results SUBOPTIMAL_KHR or ERROR_OUT_OF_DATE_KHR
     // (see documentation for hal::window::Swapchain::present)
-    match swapchain_state.swapchain.present(&mut command_queues[0], image_index, vec![render_finished_semaphore]) {
+    match {
+        swapchain_state.swapchain.present(&mut command_queues[0], image_index, vec![render_finished_semaphore])
+    } {
         Ok(()) => {},
         Err(()) => {
             swapchain_state.recreate();
-        },
+        }
     }
 }
 
@@ -364,7 +398,7 @@ fn create_render_pass(
         // srcAccessMask .. dstAccessMask
         accesses: hal::image::Access::empty()
             ..hal::image::Access::COLOR_ATTACHMENT_READ
-            | hal::image::Access::COLOR_ATTACHMENT_WRITE,
+                | hal::image::Access::COLOR_ATTACHMENT_WRITE,
     };
 
     device.create_render_pass(&[color_attachment], &[subpass], &[subpass_dependency])
@@ -383,17 +417,17 @@ fn create_graphics_pipeline(
         include_str!("09_shader_base.vert"),
         glsl_to_spirv::ShaderType::Vertex,
     ).expect("Error compiling vertex shader code.")
-        .bytes()
-        .map(|b| b.unwrap())
-        .collect::<Vec<u8>>();
+    .bytes()
+    .map(|b| b.unwrap())
+    .collect::<Vec<u8>>();
 
     let frag_shader_code = glsl_to_spirv::compile(
         include_str!("09_shader_base.frag"),
         glsl_to_spirv::ShaderType::Fragment,
     ).expect("Error compiling fragment shader code.")
-        .bytes()
-        .map(|b| b.unwrap())
-        .collect::<Vec<u8>>();
+    .bytes()
+    .map(|b| b.unwrap())
+    .collect::<Vec<u8>>();
 
     let vert_shader_module = device
         .create_shader_module(&vert_shader_code)
@@ -785,7 +819,10 @@ fn main_loop(
             event: winit::WindowEvent::CloseRequested,
             ..
         } => {
-            swapchain_state.device.wait_idle().expect("Queues are not going idle!");
+            swapchain_state
+                .device
+                .wait_idle()
+                .expect("Queues are not going idle!");
             winit::ControlFlow::Break
         }
         _ => {
