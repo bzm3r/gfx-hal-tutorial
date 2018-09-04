@@ -219,19 +219,20 @@ fn draw_frame(
         },
     };
 
-    let submission = {
-        let submission = &swapchain_state.submission_command_buffers[image_index as usize];
-        hal::queue::submission::Submission::new()
-            .wait_on(&[(
-                image_available_semaphore,
-                hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
-            )]).signal(vec![render_finished_semaphore])
-            .submit(Some(submission))
-    };
+    {
+        let submission = {
+            hal::queue::submission::Submission::new()
+                .wait_on(&[(
+                    image_available_semaphore,
+                    hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+                )]).signal(vec![render_finished_semaphore])
+                .submit(Some(&swapchain_state.submission_command_buffers[image_index as usize]))
+        };
 
-    swapchain_state.device.reset_fence(in_flight_fence);
-    command_queues[0].submit(submission, Some(in_flight_fence));
-
+        swapchain_state.device.reset_fence(in_flight_fence);
+        command_queues[0].submit(submission, Some(in_flight_fence));
+    }
+    
     swapchain_state
         .swapchain
         .present(
