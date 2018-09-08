@@ -256,7 +256,7 @@ fn create_render_pass(
         // srcAccessMask .. dstAccessMask
         accesses: hal::image::Access::empty()
             ..hal::image::Access::COLOR_ATTACHMENT_READ
-            | hal::image::Access::COLOR_ATTACHMENT_WRITE,
+                | hal::image::Access::COLOR_ATTACHMENT_WRITE,
     };
 
     device.create_render_pass(&[color_attachment], &[subpass], &[subpass_dependency])
@@ -275,17 +275,17 @@ fn create_graphics_pipeline(
         include_str!("09_shader_base.vert"),
         glsl_to_spirv::ShaderType::Vertex,
     ).expect("Error compiling vertex shader code.")
-        .bytes()
-        .map(|b| b.unwrap())
-        .collect::<Vec<u8>>();
+    .bytes()
+    .map(|b| b.unwrap())
+    .collect::<Vec<u8>>();
 
     let frag_shader_code = glsl_to_spirv::compile(
         include_str!("09_shader_base.frag"),
         glsl_to_spirv::ShaderType::Fragment,
     ).expect("Error compiling fragment shader code.")
-        .bytes()
-        .map(|b| b.unwrap())
-        .collect::<Vec<u8>>();
+    .bytes()
+    .map(|b| b.unwrap())
+    .collect::<Vec<u8>>();
 
     let vert_shader_module = device
         .create_shader_module(&vert_shader_code)
