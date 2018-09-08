@@ -67,37 +67,67 @@ fn main() {
     );
 }
 
-fn recreate_swapchain(adapter: &hal::Adapter<back::Backend>, surface: &mut <back::Backend as hal::Backend>::Surface, device: &<back::Backend as hal::Backend>::Device, queue_type: hal::queue::QueueType, qf_id: hal::queue::family::QueueFamilyId)
-    -> (<back::Backend as hal::Backend>::Swapchain, <back::Backend as hal::Backend>::Surface,
-        Vec<(
-            <back::Backend as hal::Backend>::Image,
-            <back::Backend as hal::Backend>::ImageView,
-        )>,
-        <back::Backend as hal::Backend>::RenderPass,
-        Vec<<back::Backend as hal::Backend>::DescriptorSetLayout>,
-        <back::Backend as hal::Backend>::PipelineLayout,
-        <back::Backend as hal::Backend>::GraphicsPipeline,
-        Vec<<back::Backend as hal::Backend>::Framebuffer>,
-        hal::pool::CommandPool<back::Backend, hal::Graphics>,
-        Vec<
-            hal::command::Submit<
-                back::Backend,
-                hal::Graphics,
-                hal::command::MultiShot,
-                hal::command::Primary,
-            >,
-        >)
-{
+fn recreate_swapchain(
+    adapter: &hal::Adapter<back::Backend>,
+    surface: &mut <back::Backend as hal::Backend>::Surface,
+    device: &<back::Backend as hal::Backend>::Device,
+    queue_type: hal::queue::QueueType,
+    qf_id: hal::queue::family::QueueFamilyId,
+    frame_images: Vec<(
+        <back::Backend as hal::Backend>::Image,
+        <back::Backend as hal::Backend>::ImageView,
+    )>,
+    swapchain: <back::Backend as hal::Backend>::Swapchain,
+    render_pass: <back::Backend as hal::Backend>::RenderPass,
+    descriptor_set_layouts: Vec<<back::Backend as hal::Backend>::DescriptorSetLayout>,
+    pipeline_layout: <back::Backend as hal::Backend>::PipelineLayout,
+    gfx_pipeline: <back::Backend as hal::Backend>::GraphicsPipeline,
+    swapchain_framebuffers: Vec<<back::Backend as hal::Backend>::Framebuffer>,
+    mut command_pool: hal::pool::CommandPool<back::Backend, hal::Graphics>,
+) -> (
+    <back::Backend as hal::Backend>::Swapchain,
+    Vec<(
+        <back::Backend as hal::Backend>::Image,
+        <back::Backend as hal::Backend>::ImageView,
+    )>,
+    <back::Backend as hal::Backend>::RenderPass,
+    Vec<<back::Backend as hal::Backend>::DescriptorSetLayout>,
+    <back::Backend as hal::Backend>::PipelineLayout,
+    <back::Backend as hal::Backend>::GraphicsPipeline,
+    Vec<<back::Backend as hal::Backend>::Framebuffer>,
+    hal::pool::CommandPool<back::Backend, hal::Graphics>,
+    Vec<
+        hal::command::Submit<
+            back::Backend,
+            hal::Graphics,
+            hal::command::MultiShot,
+            hal::command::Primary,
+        >,
+    >,
+) {
     device.wait_idle().expect("Queues are not going idle!");
 
-    let (swapchain, extent, backbuffer, format) =
-        create_swap_chain(adapter, device, surface, None);
+    // how to destroy swapchains only after all their in-flight frames are done rendering?
+    // need to check in_flight_fences?
+    clean_up_swap_chain(
+        device,
+        frame_images,
+        swapchain,
+        render_pass,
+        descriptor_set_layouts,
+        pipeline_layout,
+        gfx_pipeline,
+        swapchain_framebuffers,
+        command_pool,
+        false
+    );
+
+    let (swapchain, extent, backbuffer, format) = create_swap_chain(adapter, device, surface, None);
     let frame_images = create_image_views(backbuffer, format, &device);
     let render_pass = create_render_pass(device, Some(format));
     let swapchain_framebuffers = create_framebuffers(&device, &render_pass, &frame_images, extent);
     let (descriptor_set_layouts, pipeline_layout, gfx_pipeline) =
         create_graphics_pipeline(device, extent, &render_pass);
-    let mut command_pool = create_command_pool(device, queue_type, qf_id);
     let submission_command_buffers = create_command_buffers(
         &mut command_pool,
         &render_pass,
@@ -106,13 +136,34 @@ fn recreate_swapchain(adapter: &hal::Adapter<back::Backend>, surface: &mut <back
         &gfx_pipeline,
     );
 
-    (swapchain, frame_images, render_pass, descriptor_set_layouts, pipeline_layout, gfx_pipeline, swapchain_framebuffers, command_pool)
+    (
+        swapchain,
+        frame_images,
+        render_pass,
+        descriptor_set_layouts,
+        pipeline_layout,
+        gfx_pipeline,
+        swapchain_framebuffers,
+        command_pool,
+        submission_command_buffers,
+    )
 }
 
 fn draw_frame(
+    adapter,
+    surface,
+    queue_type,
+    qf_id,
+    frame_images,
+    swapchain,
+    render_pass,
+    descriptor_set_layouts,
+    pipeline_layout,
+    gfx_pipeline,
+    swapchain_framebuffers,
+    command_pool,
     device: &<back::Backend as hal::Backend>::Device,
     command_queues: &mut Vec<hal::queue::CommandQueue<back::Backend, hal::Graphics>>,
-    swapchain: &mut <back::Backend as hal::Backend>::Swapchain,
     submission_command_buffers: &Vec<
         hal::command::Submit<
             back::Backend,
@@ -124,15 +175,33 @@ fn draw_frame(
     image_available_semaphore: &<back::Backend as hal::Backend>::Semaphore,
     render_finished_semaphore: &<back::Backend as hal::Backend>::Semaphore,
     in_flight_fence: &<back::Backend as hal::Backend>::Fence,
-) {
+) -> (frame_images,
+      swapchain,
+      render_pass,
+      descriptor_set_layouts,
+      pipeline_layout,
+      gfx_pipeline_layout,
+      swapchain_framebuffers,
+      command_pool) {
     device.wait_for_fence(in_flight_fence, std::u64::MAX);
-    device.reset_fence(in_flight_fence);
 
-    let image_index = swapchain
-        .acquire_image(
-            std::u64::MAX,
-            hal::window::FrameSync::Semaphore(image_available_semaphore),
-        ).expect("could not acquire image!");
+    let image_index = match swapchain.acquire_image(
+        std::u64::MAX,
+        hal::window::FrameSync::Semaphore(image_available_semaphore),
+    ) {
+        Ok(image_index) => image_index,
+        Err(acquire_error) => match acquire_error {
+            hal::window::AcquireError::NotReady => {
+                panic!("No timeout provided, yet image acquire timed out!")
+            }
+            hal::window::AcquireError::OutOfDate => {
+                return recreate_swapchain(adapter, surface, device, queue_type, qf_id, frame_images, swapchain, render_pass, descriptor_set_layouts, pipeline_layout, gfx_pipeline, swapchain_framebuffers);
+            }
+            hal::window::AcquireError::SurfaceLost => panic!("Cannot acquire image: surface lost!"),
+        },
+    };
+
+    device.reset_fence(in_flight_fence);
 
     let submission = hal::queue::submission::Submission::new()
         .wait_on(&[(
@@ -149,6 +218,15 @@ fn draw_frame(
             image_index,
             vec![render_finished_semaphore],
         ).expect("presentation failed!");
+
+    (frame_images,
+     swapchain,
+     render_pass,
+     descriptor_set_layouts,
+     pipeline_layout,
+     gfx_pipeline_layout,
+     swapchain_framebuffers,
+     command_pool)
 }
 
 fn create_command_buffers<'a>(
@@ -293,7 +371,7 @@ fn create_render_pass(
             ..hal::pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
         accesses: hal::image::Access::empty()
             ..hal::image::Access::COLOR_ATTACHMENT_READ
-            | hal::image::Access::COLOR_ATTACHMENT_WRITE,
+                | hal::image::Access::COLOR_ATTACHMENT_WRITE,
     };
 
     device.create_render_pass(&[color_attachment], &[subpass], &[subpass_dependency])
@@ -312,17 +390,17 @@ fn create_graphics_pipeline(
         include_str!("09_shader_base.vert"),
         glsl_to_spirv::ShaderType::Vertex,
     ).expect("Error compiling vertex shader code.")
-        .bytes()
-        .map(|b| b.unwrap())
-        .collect::<Vec<u8>>();
+    .bytes()
+    .map(|b| b.unwrap())
+    .collect::<Vec<u8>>();
 
     let frag_shader_code = glsl_to_spirv::compile(
         include_str!("09_shader_base.frag"),
         glsl_to_spirv::ShaderType::Fragment,
     ).expect("Error compiling fragment shader code.")
-        .bytes()
-        .map(|b| b.unwrap())
-        .collect::<Vec<u8>>();
+    .bytes()
+    .map(|b| b.unwrap())
+    .collect::<Vec<u8>>();
 
     let vert_shader_module = device
         .create_shader_module(&vert_shader_code)
@@ -719,6 +797,48 @@ fn init_hal(
     )
 }
 
+fn clean_up_swap_chain(
+    device: &<back::Backend as hal::Backend>::Device,
+    frame_images: Vec<(
+        <back::Backend as hal::Backend>::Image,
+        <back::Backend as hal::Backend>::ImageView,
+    )>,
+    swapchain: <back::Backend as hal::Backend>::Swapchain,
+    render_pass: <back::Backend as hal::Backend>::RenderPass,
+    descriptor_set_layouts: Vec<<back::Backend as hal::Backend>::DescriptorSetLayout>,
+    pipeline_layout: <back::Backend as hal::Backend>::PipelineLayout,
+    gfx_pipeline: <back::Backend as hal::Backend>::GraphicsPipeline,
+    swapchain_framebuffers: Vec<<back::Backend as hal::Backend>::Framebuffer>,
+    mut command_pool: hal::pool::CommandPool<back::Backend, hal::Graphics>,
+    destroy_command_pool: bool,
+) {
+    if destroy_command_pool {
+        device.destroy_command_pool(command_pool.into_raw());
+    } else {
+        command_pool.reset();
+    }
+
+    for fb in swapchain_framebuffers.into_iter() {
+        device.destroy_framebuffer(fb);
+    }
+
+    device.destroy_graphics_pipeline(gfx_pipeline);
+
+    for dsl in descriptor_set_layouts.into_iter() {
+        device.destroy_descriptor_set_layout(dsl);
+    }
+
+    device.destroy_pipeline_layout(pipeline_layout);
+
+    device.destroy_render_pass(render_pass);
+
+    for (_, image_view) in frame_images.into_iter() {
+        device.destroy_image_view(image_view);
+    }
+
+    device.destroy_swapchain(swapchain);
+}
+
 fn clean_up(
     device: <back::Backend as hal::Backend>::Device,
     frame_images: Vec<(
@@ -745,27 +865,17 @@ fn clean_up(
         }
     }
 
-    device.destroy_command_pool(command_pool.into_raw());
-
-    for fb in swapchain_framebuffers.into_iter() {
-        device.destroy_framebuffer(fb);
-    }
-
-    device.destroy_graphics_pipeline(gfx_pipeline);
-
-    for dsl in descriptor_set_layouts.into_iter() {
-        device.destroy_descriptor_set_layout(dsl);
-    }
-
-    device.destroy_pipeline_layout(pipeline_layout);
-
-    device.destroy_render_pass(render_pass);
-
-    for (_, image_view) in frame_images.into_iter() {
-        device.destroy_image_view(image_view);
-    }
-
-    device.destroy_swapchain(swapchain);
+    clean_up_swap_chain(
+        &device,
+        frame_images,
+        swapchain,
+        render_pass,
+        descriptor_set_layouts,
+        pipeline_layout,
+        gfx_pipeline,
+        swapchain_framebuffers,
+        command_pool,
+    );
 }
 
 fn main_loop(

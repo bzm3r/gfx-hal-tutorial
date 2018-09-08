@@ -98,3 +98,7 @@ path = "src/14_command_buffers.rs"
 name = "15_hello_triangle"
 path = "src/15_hello_triangle.rs"
 
+[[bin]]
+name = "16_swap_chain_recreation"
+path = "src/16_swap_chain_recreation.rs"
+
