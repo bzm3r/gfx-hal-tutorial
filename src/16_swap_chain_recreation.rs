@@ -17,13 +17,13 @@ use hal::{
 use std::io::Read;
 use winit::{dpi, ControlFlow, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
 
-static WINDOW_NAME: &str = "15_hello_triangle";
+static WINDOW_NAME: &str = "16_swap_chain_recreation";
 const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 fn main() {
     env_logger::init();
     let mut application = HelloTriangleApplication::init();
-    application.run();
+    let mut application = application.run();
     application.clean_up();
 }
 
@@ -37,7 +37,7 @@ struct HalState {
     render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
     image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
     submission_command_buffers:
-        Vec<command::Submit<back::Backend, Graphics, command::MultiShot, command::Primary>>,
+    Vec<command::Submit<back::Backend, Graphics, command::MultiShot, command::Primary>>,
     command_pool: pool::CommandPool<back::Backend, Graphics>,
     swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
     gfx_pipeline: <back::Backend as Backend>::GraphicsPipeline,
@@ -48,32 +48,101 @@ struct HalState {
         <back::Backend as Backend>::Image,
         <back::Backend as Backend>::ImageView,
     )>,
-    _format: format::Format,
+    format: format::Format,
     swapchain: <back::Backend as Backend>::Swapchain,
     command_queues: Vec<queue::CommandQueue<back::Backend, Graphics>>,
     device: <back::Backend as Backend>::Device,
-    _surface: <back::Backend as Backend>::Surface,
-    _adapter: Adapter<back::Backend>,
+    surface: <back::Backend as Backend>::Surface,
+    adapter: Adapter<back::Backend>,
     _instance: back::Instance,
 }
 
 impl HalState {
-    fn clean_up(self) {
+    fn draw_frame(mut self, current_frame: usize) -> Self {
+        self.device.wait_for_fence(&self.in_flight_fences[current_frame], std::u64::MAX);
+        self.device.reset_fence(&self.in_flight_fences[current_frame]);
+
+        let frame_sync_semaphore = window::FrameSync::Semaphore(&self.image_available_semaphores[current_frame]);
+        let image_index = match self.swapchain.acquire_image(std::u64::MAX, frame_sync_semaphore) {
+            Ok(image_index) => image_index,
+            Err(error) => match error {
+                window::AcquireError::OutOfDate | window::AcquireError::SurfaceLost => {
+                    self.recreate_swap_chain();
+                    return self;
+                },
+                _ => {
+                    // would be nice if we could call self.clean_up here, but it requires ownership
+                    self.clean_up();
+                    panic!("Could not acquire image!");
+                }
+            },
+        };
+
+        let submission = queue::submission::Submission::new()
+            .wait_on(&[(
+                &self.image_available_semaphores[current_frame],
+                pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+            )]).signal(vec![&self.render_finished_semaphores[current_frame]])
+            .submit(Some(&self.submission_command_buffers[image_index as usize]));
+
+        self.command_queues[0].submit(submission, Some(&self.in_flight_fences[current_frame]));
+
+
+        // would be nice if we could call self.clean_up here too, before panicking
+        match self.swapchain.present(&mut self.command_queues[0], image_index, vec![&self.render_finished_semaphores[current_frame]]) {
+            Ok(result) => { self },
+            Err(error) => {
+                self.clean_up();
+                panic!("presentation failed!");
+            },
+        }
+
+        // should draw_frame also take ownership, and then return the state once its done?
+    }
+
+    fn recreate_swap_chain(mut self) {
+        self.device.wait_idle();
+
+        self.clean_up_swap_chain(false);
+
+        // no chooseSwapExtent like function, since SwapchainConfig::from_caps does its work?
+        let (swapchain, extent, backbuffer, format) =
+            HelloTriangleApplication::create_swap_chain(&self.adapter, &self.device, &mut self.surface, None);
+        self.swapchain = swapchain;
+        self.format = format;
+        self.frame_images =
+            HelloTriangleApplication::create_image_views(backbuffer, self.format, &self.device);
+        self.render_pass = HelloTriangleApplication::create_render_pass(&self.device, Some(self.format));
+        let (descriptor_set_layouts, pipeline_layout, gfx_pipeline) =
+            HelloTriangleApplication::create_graphics_pipeline(&self.device, extent, &self.render_pass);
+        self.descriptor_set_layouts = descriptor_set_layouts;
+        self.pipeline_layout = pipeline_layout;
+        self.gfx_pipeline = gfx_pipeline;
+        self.swapchain_framebuffers = HelloTriangleApplication::create_framebuffers(
+            &self.device,
+            &self.render_pass,
+            &self.frame_images,
+            extent,
+        );
+        // do not need to recreate command pool, as we reset it during swap chain clean up
+        self.submission_command_buffers = HelloTriangleApplication::create_command_buffers(
+            &mut self.command_pool,
+            &self.render_pass,
+            &self.swapchain_framebuffers,
+            extent,
+            &self.gfx_pipeline,
+        );
+    }
+
+    fn clean_up_swap_chain(mut self, destroy_command_pool: bool) {
         let device = &self.device;
 
-        for fence in self.in_flight_fences {
-            device.destroy_fence(fence)
+        if destroy_command_pool {
+            device.destroy_command_pool(self.command_pool.into_raw());
+        } else {
+            // free command buffers
+            self.command_pool.reset();
         }
-
-        for semaphore in self.render_finished_semaphores {
-            device.destroy_semaphore(semaphore)
-        }
-
-        for semaphore in self.image_available_semaphores {
-            device.destroy_semaphore(semaphore)
-        }
-
-        device.destroy_command_pool(self.command_pool.into_raw());
 
         for framebuffer in self.swapchain_framebuffers {
             device.destroy_framebuffer(framebuffer);
@@ -94,6 +163,24 @@ impl HalState {
         }
 
         device.destroy_swapchain(self.swapchain);
+    }
+
+    fn clean_up(self) {
+        let device = &self.device;
+
+        for fence in self.in_flight_fences {
+            device.destroy_fence(fence)
+        }
+
+        for semaphore in self.render_finished_semaphores {
+            device.destroy_semaphore(semaphore)
+        }
+
+        for semaphore in self.image_available_semaphores {
+            device.destroy_semaphore(semaphore)
+        }
+
+        self.clean_up_swap_chain(true);
     }
 }
 
@@ -180,12 +267,12 @@ impl HelloTriangleApplication {
             pipeline_layout,
             render_pass,
             frame_images,
-            _format: format,
+            format: format,
             swapchain,
             command_queues,
             device,
-            _surface: surface,
-            _adapter: adapter,
+            surface: surface,
+            adapter: adapter,
             _instance: instance,
         }
     }
@@ -354,7 +441,6 @@ impl HelloTriangleApplication {
 
         let color_attachment_ref: pass::AttachmentRef = (0, image::Layout::ColorAttachmentOptimal);
 
-        // hal assumes pipeline bind point is GRAPHICS
         let subpass = pass::SubpassDesc {
             colors: &[color_attachment_ref],
             depth_stencil: None,
@@ -379,17 +465,17 @@ impl HelloTriangleApplication {
             include_str!("09_shader_base.vert"),
             glsl_to_spirv::ShaderType::Vertex,
         ).expect("Error compiling vertex shader code.")
-        .bytes()
-        .map(|b| b.unwrap())
-        .collect::<Vec<u8>>();
+            .bytes()
+            .map(|b| b.unwrap())
+            .collect::<Vec<u8>>();
 
         let frag_shader_code = glsl_to_spirv::compile(
             include_str!("09_shader_base.frag"),
             glsl_to_spirv::ShaderType::Fragment,
         ).expect("Error compiling fragment shader code.")
-        .bytes()
-        .map(|b| b.unwrap())
-        .collect::<Vec<u8>>();
+            .bytes()
+            .map(|b| b.unwrap())
+            .collect::<Vec<u8>>();
 
         let vert_shader_module = device
             .create_shader_module(&vert_shader_code)
@@ -564,7 +650,7 @@ impl HelloTriangleApplication {
         extent: window::Extent2D,
         pipeline: &<back::Backend as Backend>::GraphicsPipeline,
     ) -> Vec<command::Submit<back::Backend, Graphics, command::MultiShot, command::Primary>> {
-        // reserve (allocate memory for) primary command buffers
+
         command_pool.reserve(framebuffers.iter().count());
 
         let mut submission_command_buffers: Vec<
@@ -581,7 +667,6 @@ impl HelloTriangleApplication {
 
             command_buffer.bind_graphics_pipeline(pipeline);
             {
-                // begin render pass
                 let render_area = pso::Rect {
                     x: 0,
                     y: 0,
@@ -622,45 +707,9 @@ impl HelloTriangleApplication {
         unsafe { pool::CommandPool::new(raw_command_pool) }
     }
 
-    fn draw_frame(
-        device: &<back::Backend as Backend>::Device,
-        command_queues: &mut [queue::CommandQueue<back::Backend, Graphics>],
-        swapchain: &mut <back::Backend as Backend>::Swapchain,
-        submission_command_buffers: &[command::Submit<
-            back::Backend,
-            Graphics,
-            command::MultiShot,
-            command::Primary,
-        >],
-        image_available_semaphore: &<back::Backend as Backend>::Semaphore,
-        render_finished_semaphore: &<back::Backend as Backend>::Semaphore,
-        in_flight_fence: &<back::Backend as Backend>::Fence,
-    ) {
-        device.wait_for_fence(in_flight_fence, std::u64::MAX);
-        device.reset_fence(in_flight_fence);
-
-        let image_index = swapchain
-            .acquire_image(
-                std::u64::MAX,
-                window::FrameSync::Semaphore(image_available_semaphore),
-            ).expect("could not acquire image!");
-
-        let submission = queue::submission::Submission::new()
-            .wait_on(&[(
-                image_available_semaphore,
-                pso::PipelineStage::COLOR_ATTACHMENT_OUTPUT,
-            )]).signal(vec![render_finished_semaphore])
-            .submit(Some(&submission_command_buffers[image_index as usize]));
-
-        // recall we only made one queue
-        command_queues[0].submit(submission, Some(in_flight_fence));
-
-        swapchain
-            .present(
-                &mut command_queues[0],
-                image_index,
-                vec![render_finished_semaphore],
-            ).expect("presentation failed!");
+    fn draw_frame(mut self, current_frame: usize) -> Self {
+        self.hal_state = self.hal_state.draw_frame(current_frame);
+        self
     }
 
     fn create_sync_objects(
@@ -687,7 +736,7 @@ impl HelloTriangleApplication {
         )
     }
 
-    fn main_loop(&mut self) {
+    fn main_loop(mut self) -> Self {
         let mut current_frame: usize = 0;
 
         let mut events_loop = self
@@ -708,26 +757,19 @@ impl HelloTriangleApplication {
                 ControlFlow::Break
             }
             _ => {
-                HelloTriangleApplication::draw_frame(
-                    &self.hal_state.device,
-                    &mut self.hal_state.command_queues,
-                    &mut self.hal_state.swapchain,
-                    &self.hal_state.submission_command_buffers,
-                    &self.hal_state.image_available_semaphores[current_frame],
-                    &self.hal_state.render_finished_semaphores[current_frame],
-                    &self.hal_state.in_flight_fences[current_frame],
-                );
+                self = self.draw_frame(current_frame);
 
                 current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
-                ;
                 ControlFlow::Continue
             }
         });
         self.window_state.events_loop = Some(events_loop);
+        self
     }
 
-    fn run(&mut self) {
-        self.main_loop();
+    fn run(mut self) -> Self {
+        self = self.main_loop();
+        self
     }
 
     fn clean_up(self) {
