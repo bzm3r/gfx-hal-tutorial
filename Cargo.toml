@@ -11,7 +11,7 @@ vulkan = ["gfx-backend-vulkan"]
 
 [dependencies]
 winit = "0.17"
-gfx-hal = { version = "0.1", git = "https://github.com/bzm3r/gfx", branch = "all-components" }
+gfx-hal = { version = "0.1", git = "https://github.com/bzm3r/gfx", branch = "master" }
 glsl-to-spirv = "0.1.6"
 log = "0.4.0"
 env_logger = "0.5.12"
