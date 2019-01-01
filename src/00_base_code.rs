@@ -14,7 +14,9 @@ static WINDOW_NAME: &str = "00_base_code";
 fn main() {
     let mut application = HelloTriangleApplication::init();
     application.run();
-    application.clean_up();
+    unsafe {
+        application.clean_up();
+    }
 }
 
 struct WindowState {
@@ -25,7 +27,7 @@ struct WindowState {
 struct HalState {}
 
 impl HalState {
-    fn clean_up(self) {}
+    unsafe fn clean_up(self) {}
 }
 
 struct HelloTriangleApplication {
@@ -76,8 +78,7 @@ impl HelloTriangleApplication {
         self.main_loop();
     }
 
-    fn clean_up(self) {
+    unsafe fn clean_up(self) {
         self.hal_state.clean_up();
     }
 }
-

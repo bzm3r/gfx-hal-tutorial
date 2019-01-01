@@ -19,7 +19,9 @@ fn main() {
     env_logger::init();
     let mut application = HelloTriangleApplication::init();
     application.run();
-    application.clean_up();
+    unsafe {
+        application.clean_up();
+    }
 }
 
 struct WindowState {
@@ -35,7 +37,7 @@ struct HalState {
 }
 
 impl HalState {
-    fn clean_up(self) {}
+    unsafe fn clean_up(self) {}
 }
 
 struct HelloTriangleApplication {
@@ -138,13 +140,14 @@ impl HelloTriangleApplication {
 
         // we only want to create a single queue
         let priorities = vec![1.0; 1];
-
         let families = [(family, priorities.as_slice())];
 
-        let Gpu { device, mut queues } = adapter
-            .physical_device
-            .open(&families)
-            .expect("Could not create device.");
+        let Gpu { device, mut queues } = unsafe {
+            adapter
+                .physical_device
+                .open(&families)
+                .expect("Could not create device.")
+        };
 
         let mut queue_group = queues
             .take::<Graphics>(family.id())
@@ -171,8 +174,7 @@ impl HelloTriangleApplication {
         self.main_loop();
     }
 
-    fn clean_up(self) {
+    unsafe fn clean_up(self) {
         self.hal_state.clean_up();
     }
 }
-

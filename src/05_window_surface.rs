@@ -20,7 +20,9 @@ fn main() {
     env_logger::init();
     let mut application = HelloTriangleApplication::init();
     application.run();
-    application.clean_up();
+    unsafe {
+        application.clean_up();
+    }
 }
 
 struct WindowState {
@@ -37,7 +39,7 @@ struct HalState {
 }
 
 impl HalState {
-    fn clean_up(self) {}
+    unsafe fn clean_up(self) {}
 }
 
 struct HelloTriangleApplication {
@@ -151,16 +153,18 @@ impl HelloTriangleApplication {
                 Graphics::supported_by(family.queue_type())
                     && family.max_queues() > 0
                     && surface.supports_queue_family(family)
-            }).expect("Could not find a queue family supporting graphics.");
+            })
+            .expect("Could not find a queue family supporting graphics.");
 
         let priorities = vec![1.0; 1];
-
         let families = [(family, priorities.as_slice())];
 
-        let Gpu { device, mut queues } = adapter
-            .physical_device
-            .open(&families)
-            .expect("Could not create device.");
+        let Gpu { device, mut queues } = unsafe {
+            adapter
+                .physical_device
+                .open(&families)
+                .expect("Could not create device.")
+        };
 
         let mut queue_group = queues
             .take::<Graphics>(family.id())
@@ -187,8 +191,7 @@ impl HelloTriangleApplication {
         self.main_loop();
     }
 
-    fn clean_up(self) {
+    unsafe fn clean_up(self) {
         self.hal_state.clean_up();
     }
 }
-
